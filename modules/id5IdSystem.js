@@ -38,7 +38,10 @@ const MODULE_NAME = 'id5Id';
 const GVLID = 131;
 export const ID5_STORAGE_NAME = 'id5id';
 const LOG_PREFIX = 'User ID - ID5 submodule: ';
-const ID5_API_CONFIG_URL = 'https://id5-sync.com/api/config/prebid';
+const ID5_API_CONFIG_URL = 'https://prebid.id5-tech.io/v1/config';
+const ID5_BOUNCE_URL = 'https://id5-sync.com/bounce';
+const ID5_DEFAULT_FETCH_URL = 'https://id5-sync.com/g/v2';
+const REDACTED = '__ID5_REDACTED__';
 const ID5_DOMAIN = 'id5-sync.com';
 const TRUE_LINK_SOURCE = 'true-link-id5-sync.com';
 
@@ -363,7 +366,10 @@ export class IdFetchFlow {
    * @returns {Promise<Id5Response>} The result of calling the server side
    */
   async execute() {
-    const configCallPromise = this.#callForConfig();
+    const configCallPromise = this.#callForConfig().catch(error => {
+      logWarn(LOG_PREFIX + 'Error while calling config endpoint.', error);
+      return undefined;
+    });
     if (this.#isExternalModule()) {
       try {
         return await this.#externalModuleFlow(configCallPromise);
@@ -393,20 +399,52 @@ export class IdFetchFlow {
 
   async #regularFlow(configCallPromise) {
     const fetchFlowConfig = await configCallPromise;
-    const extensionsData = await this.#callForExtensions(fetchFlowConfig.extensionsCall);
-    const fetchCallResponse = await this.#callId5Fetch(fetchFlowConfig.fetchCall, extensionsData);
+    const extensions = await this.#collectExtensions(fetchFlowConfig);
+    const fetchCallResponse = await this.#callId5Fetch(fetchFlowConfig?.fetchCall || this.#defaultFetchCall(), extensions);
     return this.#processFetchCallResponse(fetchCallResponse);
+  }
+
+  async #collectExtensions(fetchFlowConfig) {
+    // Without a configured fetch call the lookup mode is unknown, and a lookup mode partner must not get a cookie.
+    const bounceEnabled = fetchFlowConfig?.fetchCall !== undefined && fetchFlowConfig.fetchCall.overrides?.idLookupMode !== true;
+    const [extensionsData, bounceData] = await Promise.all([
+      this.#callForExtensions(fetchFlowConfig?.extensionsCall),
+      bounceEnabled ? this.#callForBounce() : undefined
+    ]);
+    if (extensionsData === undefined && bounceData === undefined) {
+      return undefined;
+    }
+    return { ...extensionsData, ...bounceData };
+  }
+
+  #defaultFetchCall() {
+    return {
+      url: `${ID5_DEFAULT_FETCH_URL}/${this.submoduleConfig.params.partner}.json`
+    };
+  }
+
+  // Sets the id5 cookie when it is missing; setCookie is the fetch service's third party cookie signal.
+  async #callForBounce() {
+    try {
+      const response = await fetch(ID5_BOUNCE_URL, { credentials: 'include' });
+      if (!response.ok) {
+        throw new Error(`Bounce endpoint responded with status ${response.status}`);
+      }
+      const bounce = await response.json();
+      logInfo(LOG_PREFIX + 'bounce response received from the server', bounce);
+      return bounce;
+    } catch (error) {
+      logWarn(LOG_PREFIX + 'Error while calling bounce endpoint. Continuing without bounce.', error);
+      return undefined;
+    }
   }
 
   async #callForConfig() {
     const url = this.submoduleConfig.params.configUrl || ID5_API_CONFIG_URL; // override for debug/test purposes only
     const response = await fetch(url, {
       method: 'POST',
-      body: JSON.stringify({
-        ...this.submoduleConfig,
-        bounce: true
-      }),
-      credentials: 'include'
+      body: JSON.stringify(redactSensitiveFields(this.submoduleConfig)),
+      credentials: 'omit'
     });
     if (!response.ok) {
       throw new Error('Error while calling config endpoint: ', response);
@@ -516,6 +554,20 @@ export class IdFetchFlow {
     }
     return fetchCallResponse;
   }
+}
+
+// The config endpoint reads neither field; the placeholder keeps the configuration visible without the data.
+// Copy, never mutate - the fetch call needs the real pd.
+function redactSensitiveFields(submoduleConfig) {
+  const redacted = { ...submoduleConfig };
+  if (submoduleConfig.params?.pd) {
+    redacted.params = { ...submoduleConfig.params, pd: REDACTED };
+  }
+  // Prebid's own userId field: a ready-made ID, which reaches the config call when it is set alongside storage.
+  if (submoduleConfig.value) {
+    redacted.value = REDACTED;
+  }
+  return redacted;
 }
 
 async function loadExternalModule(url) {
