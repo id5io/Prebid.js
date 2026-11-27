@@ -547,14 +547,13 @@ export class IdFetchFlow {
   }
 }
 
-// The config endpoint reads neither field; the placeholder keeps the configuration visible without the data.
-// Copy, never mutate - the fetch call needs the real pd.
+// The config endpoint reads neither field; the fetch call needs the real pd, so redact a copy.
 function redactSensitiveFields(submoduleConfig) {
   const redacted = { ...submoduleConfig };
   if (submoduleConfig.params?.pd) {
     redacted.params = { ...submoduleConfig.params, pd: REDACTED };
   }
-  // Prebid's own userId field: a ready-made ID, which reaches the config call when it is set alongside storage.
+  // Prebid's own field for a ready-made ID, set alongside storage.
   if (submoduleConfig.value) {
     redacted.value = REDACTED;
   }
