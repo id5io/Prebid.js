@@ -667,6 +667,78 @@ describe('ID5 ID System', function () {
       await submoduleResponsePromise;
     });
 
+    [
+      ['fails', request => request.error()],
+      ['responds with an error status', request => request.respond(500, responseHeader, '')]
+    ].forEach(([description, failExtensionsRequest]) => {
+      it(`should call the ID5 server even when the extensions call ${description}`, async function () {
+        const xhrServerMock = new XhrServerMock(server);
+
+        // Trigger the fetch but we await on it later
+        const submoduleResponsePromise = callSubmoduleGetId(getId5FetchConfig(), undefined, undefined);
+
+        const configRequest = await xhrServerMock.expectConfigRequest();
+        const extensionsRequest = await xhrServerMock.respondWithConfigAndExpectNext(configRequest, {
+          fetchCall: {
+            url: ID5_ENDPOINT
+          },
+          extensionsCall: {
+            url: ID5_EXTENSIONS_ENDPOINT,
+            method: 'GET'
+          }
+        });
+        expect(extensionsRequest.url).is.eq(ID5_EXTENSIONS_ENDPOINT);
+        failExtensionsRequest(extensionsRequest);
+
+        const fetchRequest = await xhrServerMock.expectNextRequest();
+        expect(fetchRequest.url).is.eq(ID5_ENDPOINT);
+        expect(JSON.parse(fetchRequest.requestBody).extensions?.lb).is.undefined;
+
+        fetchRequest.respond(200, responseHeader, JSON.stringify(ID5_JSON_RESPONSE));
+        const submoduleResponse = await submoduleResponsePromise;
+        expect(submoduleResponse).is.eql(id5PrebidResponse(ID5_JSON_RESPONSE, getId5FetchConfig()));
+      });
+    });
+
+    [
+      ['fails', request => request.error()],
+      ['responds with an error status', request => request.respond(500, responseHeader, '')]
+    ].forEach(([description, failConfigRequest]) => {
+      it(`should call the default ID5 fetch endpoint when the config call ${description}`, async function () {
+        const xhrServerMock = new XhrServerMock(server);
+
+        // Trigger the fetch but we await on it later
+        const submoduleResponsePromise = callSubmoduleGetId(getId5FetchConfig(), undefined, undefined);
+
+        const configRequest = await xhrServerMock.expectConfigRequest();
+        failConfigRequest(configRequest);
+
+        const fetchRequest = await xhrServerMock.expectNextRequest();
+        expect(fetchRequest.url).is.eq(ID5_ENDPOINT);
+        expect(fetchRequest.method).is.eq('POST');
+        expect(JSON.parse(fetchRequest.requestBody).partner).is.eq(ID5_TEST_PARTNER_ID);
+
+        fetchRequest.respond(200, responseHeader, JSON.stringify(ID5_JSON_RESPONSE));
+        const submoduleResponse = await submoduleResponsePromise;
+        expect(submoduleResponse).is.eql(id5PrebidResponse(ID5_JSON_RESPONSE, getId5FetchConfig()));
+      });
+    });
+
+    it('should call the default ID5 fetch endpoint when the config carries no fetch call', async function () {
+      const xhrServerMock = new XhrServerMock(server);
+
+      // Trigger the fetch but we await on it later
+      const submoduleResponsePromise = callSubmoduleGetId(getId5FetchConfig(), undefined, undefined);
+
+      const configRequest = await xhrServerMock.expectConfigRequest();
+      const fetchRequest = await xhrServerMock.respondWithConfigAndExpectNext(configRequest, {});
+      expect(fetchRequest.url).is.eq(ID5_ENDPOINT);
+      expect(JSON.parse(fetchRequest.requestBody).partner).is.eq(ID5_TEST_PARTNER_ID);
+
+      fetchRequest.respond(200, responseHeader, JSON.stringify(ID5_JSON_RESPONSE));
+      await submoduleResponsePromise;
+    });
+
     it('should call the ID5 server with extensions', async function () {
       const xhrServerMock = new XhrServerMock(server);
 
@@ -940,6 +1012,23 @@ describe('ID5 ID System', function () {
         const submoduleResponse = await submoduleResponsePromise;
         expect(submoduleResponse).to.eql(id5PrebidResponse(MOCK_RESPONSE, config));
         expect(mockId5ExternalModule.calledOnce);
+      });
+
+      it('should still use the external module when the config call fails', async function () {
+        const xhrServerMock = new XhrServerMock(server);
+        const config = getId5FetchConfig();
+        config.params.externalModuleUrl = 'https://test-me.test';
+
+        // Trigger the fetch but we await on it later
+        const submoduleResponsePromise = callSubmoduleGetId(config, undefined, undefined);
+
+        const configRequest = await xhrServerMock.expectConfigRequest();
+        configRequest.error();
+
+        const submoduleResponse = await submoduleResponsePromise;
+        expect(submoduleResponse).to.eql(id5PrebidResponse(MOCK_RESPONSE, config));
+        expect(mockId5ExternalModule.calledOnce).to.be.true;
+        expect(mockId5ExternalModule.firstCall.args[0]).to.eql({});
       });
     });
 

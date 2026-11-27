@@ -41,6 +41,7 @@ const LOG_PREFIX = 'User ID - ID5 submodule: ';
 const ID5_API_CONFIG_URL = 'https://id5-sync.com/api/config/prebid';
 const ID5_DOMAIN = 'id5-sync.com';
 const TRUE_LINK_SOURCE = 'true-link-id5-sync.com';
+const ID5_DEFAULT_FETCH_URL = 'https://id5-sync.com/g/v2';
 
 export const storage = getStorageManager({ moduleType: MODULE_TYPE_UID, moduleName: MODULE_NAME });
 
@@ -363,7 +364,10 @@ export class IdFetchFlow {
    * @returns {Promise<Id5Response>} The result of calling the server side
    */
   async execute() {
-    const configCallPromise = this.#callForConfig();
+    const configCallPromise = this.#callForConfig().catch(error => {
+      logWarn(LOG_PREFIX + 'Error while calling config endpoint. Continuing without a dynamic configuration.', error);
+      return {};
+    });
     if (this.#isExternalModule()) {
       try {
         return await this.#externalModuleFlow(configCallPromise);
@@ -420,21 +424,26 @@ export class IdFetchFlow {
     if (extensionsCallConfig === undefined) {
       return undefined;
     }
-    const extensionsUrl = extensionsCallConfig.url;
-    const method = extensionsCallConfig.method || 'GET';
-    const body = method === 'GET' ? undefined : JSON.stringify(extensionsCallConfig.body || {});
-    const response = await fetch(extensionsUrl, { method, body });
-    if (!response.ok) {
-      throw new Error('Error while calling extensions endpoint: ', response);
+    try {
+      const extensionsUrl = extensionsCallConfig.url;
+      const method = extensionsCallConfig.method || 'GET';
+      const body = method === 'GET' ? undefined : JSON.stringify(extensionsCallConfig.body || {});
+      const response = await fetch(extensionsUrl, { method, body });
+      if (!response.ok) {
+        throw new Error(`Extensions endpoint responded with status ${response.status}`);
+      }
+      const extensions = await response.json();
+      logInfo(LOG_PREFIX + 'extensions response received from the server', extensions);
+      return extensions;
+    } catch (error) {
+      logWarn(LOG_PREFIX + 'Error while calling extensions endpoint. Continuing without extensions.', error);
+      return undefined;
     }
-    const extensions = await response.json();
-    logInfo(LOG_PREFIX + 'extensions response received from the server', extensions);
-    return extensions;
   }
 
   async #callId5Fetch(fetchCallConfig, extensionsData) {
-    const fetchUrl = fetchCallConfig.url;
-    const additionalData = fetchCallConfig.overrides || {};
+    const fetchUrl = fetchCallConfig?.url || `${ID5_DEFAULT_FETCH_URL}/${this.submoduleConfig.params.partner}.json`;
+    const additionalData = fetchCallConfig?.overrides || {};
     const body = JSON.stringify({
       ...this.#createFetchRequestData(),
       ...additionalData,
