@@ -53,6 +53,11 @@ export interface Id5SubmoduleParams {
    */
   exposeTargeting?: boolean;
   /**
+   * URL of the endpoint serving the ID5 module configuration.
+   * Defaults to https://prebid.id5-tech.io/v1/config. Intended for debugging and testing.
+   */
+  configUrl?: string;
+  /**
    * Allows publishers to easily run an A/B Test. If enabled and the user is in the Control Group, the ID5 ID will NOT be exposed to bid adapters for that request
    */
   abTesting?: Id5AbTestingConfig;

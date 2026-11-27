@@ -20,7 +20,7 @@ const STANDARD_EVENTS_TO_TRACK = [
   BID_WON,
 ];
 
-const CONFIG_URL_PREFIX = 'https://api.id5-sync.com/analytics';
+const CONFIG_URL_PREFIX = 'https://analytics.id5-tech.io/v1/config';
 const TZ = new Date().getTimezoneOffset();
 const PBJS_VERSION = 'v' + '$prebid.version$';
 const ID5_REDACTED = '__ID5_REDACTED__';
@@ -110,7 +110,9 @@ const ENABLE_FUNCTION = (config) => {
     return;
   }
 
-  ajax(`${CONFIG_URL_PREFIX}/${partnerId}/pbjs`, (result) => {
+  const configUrl = _this.options.configUrl || `${CONFIG_URL_PREFIX}/pbjs/${partnerId}`;
+
+  ajax(configUrl, (result) => {
     logInfo('id5Analytics: Received from configuration endpoint', result);
 
     const configFromServer = JSON.parse(result);

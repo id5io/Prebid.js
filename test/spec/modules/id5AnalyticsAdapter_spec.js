@@ -9,7 +9,7 @@ import { getGlobal } from '../../../src/prebidGlobal.js';
 import { enrichEidsRule } from "../../../modules/tcfControl.ts";
 import * as utils from '../../../src/utils.js';
 
-const CONFIG_URL = 'https://api.id5-sync.com/analytics/12349/pbjs';
+const CONFIG_URL = 'https://analytics.id5-tech.io/v1/config/pbjs/12349';
 const INGEST_URL = 'https://test.me/ingest';
 
 describe('ID5 analytics adapter', () => {
@@ -50,6 +50,26 @@ describe('ID5 analytics adapter', () => {
     server.respond();
 
     expect(server.requests).to.have.length(1);
+
+    id5AnalyticsAdapter.disableAnalytics();
+  });
+
+  it('calls the configuration endpoint at the configured URL', () => {
+    const configUrl = 'https://analytics.example.com/some/path';
+    server.respondWith('GET', configUrl, [200,
+      {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*'
+      },
+      `{ "sampling": 0, "ingestUrl": "${INGEST_URL}" }`
+    ]);
+    id5AnalyticsAdapter.enableAnalytics({
+      options: { ...config.options, configUrl }
+    });
+    server.respond();
+
+    expect(server.requests).to.have.length(1);
+    expect(server.requests[0].url).to.equal(configUrl);
 
     id5AnalyticsAdapter.disableAnalytics();
   });

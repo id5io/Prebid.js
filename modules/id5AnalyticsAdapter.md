@@ -40,3 +40,4 @@ pbjs.enableAnalytics({
 | provider | Required | String | The name of this module: `id5Analytics` | `id5Analytics` |
 | options.partnerId | Required | Number | This is the ID5 Partner Number obtained from registering with ID5. | `1234` |
 | options.eventsToTrack | Optional | Array of strings | Overrides the set of tracked events | `['auctionEnd','bidWon']` |
+| options.configUrl | Optional | String | URL of the endpoint serving the ID5 analytics configuration. Defaults to `https://analytics.id5-tech.io/v1/config/pbjs/{partnerId}`. Intended for debugging and testing | `https://analytics.example.com/v1/config/pbjs/1234` |

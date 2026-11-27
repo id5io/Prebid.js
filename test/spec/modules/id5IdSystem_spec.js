@@ -33,13 +33,15 @@ describe('ID5 ID System', function () {
   const TRUE_LINK_SOURCE = 'true-link-id5-sync.com';
   const ID5_TEST_PARTNER_ID = 173;
   const ID5_ENDPOINT = `https://id5-sync.com/g/v2/${ID5_TEST_PARTNER_ID}.json`;
-  const ID5_API_CONFIG_URL = `https://id5-sync.com/api/config/prebid`;
+  const ID5_API_CONFIG_URL = `https://prebid.id5-tech.io/v1/config`;
   const ID5_EXTENSIONS_ENDPOINT = 'https://extensions.id5-sync.com/test';
   const ID5_API_CONFIG = {
     fetchCall: {
       url: ID5_ENDPOINT
     }
   };
+  const ID5_BOUNCE_URL = 'https://id5-sync.com/bounce';
+  const ID5_BOUNCE_RESPONSE = { bounce: { setCookie: false } };
   const ID5_STORED_ID = 'storedid5id';
   const ID5_STORED_SIGNATURE = '123456';
   const ID5_STORED_LINK_TYPE = 1;
@@ -235,10 +237,17 @@ describe('ID5 ID System', function () {
   class XhrServerMock {
     currentRequestIdx = 0;
     server;
+    autoRespondBounce;
 
-    constructor(server) {
+    /**
+     * @param server
+     * @param {boolean} [autoRespondBounce] - when true, bounce requests are answered with ID5_BOUNCE_RESPONSE and
+     * skipped by expectNextRequest, so tests not about bounce see the same requests as before
+     */
+    constructor(server, autoRespondBounce = true) {
       this.currentRequestIdx = 0;
       this.server = server;
+      this.autoRespondBounce = autoRespondBounce;
     }
 
     async expectFirstRequest() {
@@ -246,14 +255,19 @@ describe('ID5 ID System', function () {
     }
 
     async expectNextRequest() {
-      return this.#waitOnRequest(++this.currentRequestIdx);
+      const request = await this.#waitOnRequest(++this.currentRequestIdx);
+      if (this.autoRespondBounce && request.url === ID5_BOUNCE_URL) {
+        request.respond(200, HEADERS_CONTENT_TYPE_JSON, JSON.stringify(ID5_BOUNCE_RESPONSE));
+        return this.expectNextRequest();
+      }
+      return request;
     }
 
     async expectConfigRequest() {
       const configRequest = await this.expectFirstRequest();
       expect(configRequest.url).is.eq(ID5_API_CONFIG_URL);
       expect(configRequest.method).is.eq('POST');
-      expect(configRequest.withCredentials).is.eq(true);
+      expect(configRequest.withCredentials).is.eq(false);
       return configRequest;
     }
 
@@ -461,6 +475,47 @@ describe('ID5 ID System', function () {
       gppStub?.restore();
     });
 
+    it('should redact the identifying config fields and keep the rest', async function () {
+      const xhrServerMock = new XhrServerMock(server);
+      const config = getId5FetchConfig();
+      config.params.pd = 'some-partner-data';
+      config.params.provider = 'some-provider';
+      config.value = { id5id: { uid: 'some-id' } };
+
+      const submoduleResponsePromise = callSubmoduleGetId(config, undefined, undefined);
+
+      const configRequest = await xhrServerMock.expectConfigRequest();
+      const requestBody = JSON.parse(configRequest.requestBody);
+
+      expect(requestBody.params.pd).is.eq('__ID5_REDACTED__');
+      expect(requestBody.value).is.eq('__ID5_REDACTED__');
+      expect(requestBody.params.provider).is.eq('some-provider');
+      expect(requestBody.params.partner).is.eq(ID5_TEST_PARTNER_ID);
+      expect(requestBody.storage).is.deep.eq(config.storage);
+
+      expect(config.params.pd).is.eq('some-partner-data');
+      const fetchRequest = await xhrServerMock.respondWithConfigAndExpectNext(configRequest);
+      expect(JSON.parse(fetchRequest.requestBody).pd).is.eq('some-partner-data');
+
+      fetchRequest.respond(200, responseHeader, JSON.stringify(ID5_JSON_RESPONSE));
+      await submoduleResponsePromise;
+    });
+
+    it('should not redact an empty pd', async function () {
+      const xhrServerMock = new XhrServerMock(server);
+      const config = getId5FetchConfig();
+      config.params.pd = '';
+
+      const submoduleResponsePromise = callSubmoduleGetId(config, undefined, undefined);
+
+      const configRequest = await xhrServerMock.expectConfigRequest();
+      expect(JSON.parse(configRequest.requestBody).params.pd).is.eq('');
+
+      const fetchRequest = await xhrServerMock.respondWithConfigAndExpectNext(configRequest);
+      fetchRequest.respond(200, responseHeader, JSON.stringify(ID5_JSON_RESPONSE));
+      await submoduleResponsePromise;
+    });
+
     it('should call the ID5 server and handle a valid response', async function () {
       const xhrServerMock = new XhrServerMock(server);
       const config = getId5FetchConfig();
@@ -591,10 +646,7 @@ describe('ID5 ID System', function () {
 
       const configRequest = await xhrServerMock.expectConfigRequest();
       const requestBody = JSON.parse(configRequest.requestBody);
-      expect(requestBody).is.deep.eq({
-        ...id5FetchConfig,
-        bounce: true
-      });
+      expect(requestBody).is.deep.eq(id5FetchConfig);
 
       const fetchRequest = await xhrServerMock.respondWithConfigAndExpectNext(configRequest);
       fetchRequest.respond(200, responseHeader, JSON.stringify(ID5_JSON_RESPONSE));
@@ -695,7 +747,8 @@ describe('ID5 ID System', function () {
       expect(requestBody.o).is.eq('pbjs');
       expect(requestBody.v).is.eq('$prebid.version$');
       expect(requestBody.extensions).is.deep.eq({
-        lb: 'ex'
+        lb: 'ex',
+        ...ID5_BOUNCE_RESPONSE
       });
 
       fetchRequest.respond(200, responseHeader, JSON.stringify(ID5_JSON_RESPONSE));
@@ -739,11 +792,75 @@ describe('ID5 ID System', function () {
       expect(requestBody.o).is.eq('pbjs');
       expect(requestBody.v).is.eq('$prebid.version$');
       expect(requestBody.extensions).is.deep.eq({
-        lb: 'post'
+        lb: 'post',
+        ...ID5_BOUNCE_RESPONSE
       });
 
       fetchRequest.respond(200, responseHeader, JSON.stringify(ID5_JSON_RESPONSE));
       await submoduleResponsePromise;
+    });
+
+    it('should call bounce with credentials and pass its response to the ID5 server', async function () {
+      const xhrServerMock = new XhrServerMock(server, false);
+
+      // Trigger the fetch but we await on it later
+      const submoduleResponsePromise = callSubmoduleGetId(getId5FetchConfig(), undefined, undefined);
+
+      const configRequest = await xhrServerMock.expectConfigRequest();
+      const bounceRequest = await xhrServerMock.respondWithConfigAndExpectNext(configRequest);
+      expect(bounceRequest.url).is.eq(ID5_BOUNCE_URL);
+      expect(bounceRequest.method).is.eq('GET');
+      expect(bounceRequest.withCredentials).is.eq(true);
+      bounceRequest.respond(200, HEADERS_CONTENT_TYPE_JSON, JSON.stringify({ bounce: { setCookie: true } }));
+
+      const fetchRequest = await xhrServerMock.expectNextRequest();
+      expect(fetchRequest.url).is.eq(ID5_ENDPOINT);
+      expect(JSON.parse(fetchRequest.requestBody).extensions).is.deep.eq({ bounce: { setCookie: true } });
+
+      fetchRequest.respond(200, responseHeader, JSON.stringify(ID5_JSON_RESPONSE));
+      await submoduleResponsePromise;
+    });
+
+    it('should call the ID5 server without bounce data when the bounce call fails', async function () {
+      const xhrServerMock = new XhrServerMock(server, false);
+
+      // Trigger the fetch but we await on it later
+      const submoduleResponsePromise = callSubmoduleGetId(getId5FetchConfig(), undefined, undefined);
+
+      const configRequest = await xhrServerMock.expectConfigRequest();
+      const bounceRequest = await xhrServerMock.respondWithConfigAndExpectNext(configRequest);
+      expect(bounceRequest.url).is.eq(ID5_BOUNCE_URL);
+      bounceRequest.error();
+
+      const fetchRequest = await xhrServerMock.expectNextRequest();
+      expect(fetchRequest.url).is.eq(ID5_ENDPOINT);
+      expect(JSON.parse(fetchRequest.requestBody).extensions).is.undefined;
+
+      fetchRequest.respond(200, responseHeader, JSON.stringify(ID5_JSON_RESPONSE));
+      await submoduleResponsePromise;
+    });
+
+    it('should not call bounce when the config requires the ID lookup mode', async function () {
+      const xhrServerMock = new XhrServerMock(server, false);
+
+      // Trigger the fetch but we await on it later
+      const submoduleResponsePromise = callSubmoduleGetId(getId5FetchConfig(), undefined, undefined);
+
+      const configRequest = await xhrServerMock.expectConfigRequest();
+      const fetchRequest = await xhrServerMock.respondWithConfigAndExpectNext(configRequest, {
+        fetchCall: {
+          url: ID5_ENDPOINT,
+          overrides: {
+            idLookupMode: true
+          }
+        }
+      });
+      expect(fetchRequest.url).is.eq(ID5_ENDPOINT);
+      expect(JSON.parse(fetchRequest.requestBody).extensions).is.undefined;
+
+      fetchRequest.respond(200, responseHeader, JSON.stringify(ID5_JSON_RESPONSE));
+      await submoduleResponsePromise;
+      expect(server.requests.map(request => request.url)).to.not.include(ID5_BOUNCE_URL);
     });
 
     it('should call the ID5 server with signature field from stored object', async function () {
