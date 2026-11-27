@@ -405,8 +405,9 @@ export class IdFetchFlow {
   }
 
   async #collectExtensions(fetchFlowConfig) {
+    const fetchCall = fetchFlowConfig?.fetchCall;
     // Without a configured fetch call the lookup mode is unknown, and a lookup mode partner must not get a cookie.
-    const bounceEnabled = fetchFlowConfig?.fetchCall !== undefined && fetchFlowConfig.fetchCall.overrides?.idLookupMode !== true;
+    const bounceEnabled = !!fetchCall && fetchCall.overrides?.idLookupMode !== true;
     const [extensionsData, bounceData] = await Promise.all([
       this.#callForExtensions(fetchFlowConfig?.extensionsCall),
       bounceEnabled ? this.#callForBounce() : undefined
