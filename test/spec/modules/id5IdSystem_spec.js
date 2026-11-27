@@ -667,6 +667,39 @@ describe('ID5 ID System', function () {
       await submoduleResponsePromise;
     });
 
+    [
+      ['fails', request => request.error()],
+      ['responds with an error status', request => request.respond(500, responseHeader, '')]
+    ].forEach(([description, failExtensionsRequest]) => {
+      it(`should call the ID5 server even when the extensions call ${description}`, async function () {
+        const xhrServerMock = new XhrServerMock(server);
+
+        // Trigger the fetch but we await on it later
+        const submoduleResponsePromise = callSubmoduleGetId(getId5FetchConfig(), undefined, undefined);
+
+        const configRequest = await xhrServerMock.expectConfigRequest();
+        const extensionsRequest = await xhrServerMock.respondWithConfigAndExpectNext(configRequest, {
+          fetchCall: {
+            url: ID5_ENDPOINT
+          },
+          extensionsCall: {
+            url: ID5_EXTENSIONS_ENDPOINT,
+            method: 'GET'
+          }
+        });
+        expect(extensionsRequest.url).is.eq(ID5_EXTENSIONS_ENDPOINT);
+        failExtensionsRequest(extensionsRequest);
+
+        const fetchRequest = await xhrServerMock.expectNextRequest();
+        expect(fetchRequest.url).is.eq(ID5_ENDPOINT);
+        expect(JSON.parse(fetchRequest.requestBody).extensions?.lb).is.undefined;
+
+        fetchRequest.respond(200, responseHeader, JSON.stringify(ID5_JSON_RESPONSE));
+        const submoduleResponse = await submoduleResponsePromise;
+        expect(submoduleResponse).is.eql(id5PrebidResponse(ID5_JSON_RESPONSE, getId5FetchConfig()));
+      });
+    });
+
     it('should call the ID5 server with extensions', async function () {
       const xhrServerMock = new XhrServerMock(server);
 

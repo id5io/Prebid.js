@@ -420,16 +420,21 @@ export class IdFetchFlow {
     if (extensionsCallConfig === undefined) {
       return undefined;
     }
-    const extensionsUrl = extensionsCallConfig.url;
-    const method = extensionsCallConfig.method || 'GET';
-    const body = method === 'GET' ? undefined : JSON.stringify(extensionsCallConfig.body || {});
-    const response = await fetch(extensionsUrl, { method, body });
-    if (!response.ok) {
-      throw new Error('Error while calling extensions endpoint: ', response);
+    try {
+      const extensionsUrl = extensionsCallConfig.url;
+      const method = extensionsCallConfig.method || 'GET';
+      const body = method === 'GET' ? undefined : JSON.stringify(extensionsCallConfig.body || {});
+      const response = await fetch(extensionsUrl, { method, body });
+      if (!response.ok) {
+        throw new Error(`Extensions endpoint responded with status ${response.status}`);
+      }
+      const extensions = await response.json();
+      logInfo(LOG_PREFIX + 'extensions response received from the server', extensions);
+      return extensions;
+    } catch (error) {
+      logWarn(LOG_PREFIX + 'Error while calling extensions endpoint. Continuing without extensions.', error);
+      return undefined;
     }
-    const extensions = await response.json();
-    logInfo(LOG_PREFIX + 'extensions response received from the server', extensions);
-    return extensions;
   }
 
   async #callId5Fetch(fetchCallConfig, extensionsData) {
