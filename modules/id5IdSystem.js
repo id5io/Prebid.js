@@ -547,7 +547,7 @@ export class IdFetchFlow {
   }
 }
 
-// The config endpoint reads neither field; the fetch call needs the real pd, so redact a copy.
+// Redacts a copy - the fetch call needs the real pd.
 function redactSensitiveFields(submoduleConfig) {
   const redacted = { ...submoduleConfig };
   if (submoduleConfig.params?.pd) {
